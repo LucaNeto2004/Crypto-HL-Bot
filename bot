@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Simple launcher for HyperLiquid Commodities Bot
+# Usage:
+#   ./bot           — run in foreground (live terminal output)
+#   ./bot start     — run in background
+#   ./bot stop      — stop the bot
+#   ./bot status    — check if running
+#   ./bot logs      — tail live logs
+#   ./bot dash      — start the dashboard
+
+DIR="$(cd "$(dirname "$0")" && pwd)"
+PYTHON="$DIR/.venv/bin/python"
+LOCKFILE="$DIR/data/bot.lock"
+LOGFILE="$DIR/logs/bot_live.log"
+
+get_pid() {
+    if [ -f "$LOCKFILE" ]; then
+        PID=$(cat "$LOCKFILE" 2>/dev/null | tr -d '[:space:]')
+        if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+            echo "$PID"
+            return
+        fi
+    fi
+    echo ""
+}
+
+case "${1:-run}" in
+    run)
+        PID=$(get_pid)
+        if [ -n "$PID" ]; then
+            echo "Bot already running (PID $PID). Use: ./bot stop"
+            exit 1
+        fi
+        cd "$DIR"
+        exec "$PYTHON" main.py
+        ;;
+    start)
+        PID=$(get_pid)
+        if [ -n "$PID" ]; then
+            echo "Bot already running (PID $PID). Use: ./bot stop"
+            exit 1
+        fi
+        cd "$DIR"
+        nohup "$PYTHON" main.py >> "$LOGFILE" 2>&1 & disown
+        sleep 2
+        PID=$(get_pid)
+        if [ -n "$PID" ]; then
+            echo "Bot started (PID $PID)"
+        else
+            echo "Failed to start — check logs: tail -20 $LOGFILE"
+            exit 1
+        fi
+        ;;
+    stop)
+        PID=$(get_pid)
+        if [ -z "$PID" ]; then
+            echo "Bot not running"
+            rm -f "$LOCKFILE"
+            exit 0
+        fi
+        echo "Stopping bot (PID $PID)..."
+        kill "$PID" 2>/dev/null
+        sleep 2
+        if kill -0 "$PID" 2>/dev/null; then
+            kill -9 "$PID" 2>/dev/null
+        fi
+        rm -f "$LOCKFILE"
+        echo "Bot stopped"
+        ;;
+    status)
+        PID=$(get_pid)
+        if [ -n "$PID" ]; then
+            echo "Bot running (PID $PID)"
+            tail -5 "$LOGFILE" 2>/dev/null
+        else
+            echo "Bot not running"
+        fi
+        ;;
+    logs)
+        tail -f "$LOGFILE"
+        ;;
+    dash|dashboard)
+        PID_DASH=$(pgrep -f "python.*dashboard.py" 2>/dev/null)
+        if [ -n "$PID_DASH" ]; then
+            echo "Dashboard already running (PID $PID_DASH) at http://localhost:5050"
+            exit 0
+        fi
+        cd "$DIR"
+        echo "Dashboard starting at http://localhost:5050"
+        exec "$PYTHON" dashboard.py
+        ;;
+    *)
+        echo "Usage: ./bot [run|start|stop|status|logs|dash]"
+        echo "  run     Run in foreground (default)"
+        echo "  start   Run in background"
+        echo "  stop    Stop the bot"
+        echo "  status  Check if running"
+        echo "  logs    Tail live logs"
+        echo "  dash    Start dashboard"
+        ;;
+esac

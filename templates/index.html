@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HyperLiquid Crypto — Mission Control</title>
+  <link rel="stylesheet" href="/static/css/main.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<div class="app">
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="topbar-logo">HL</div>
+      <span class="topbar-title">HYPERLIQUID CRYPTO</span>
+    </div>
+    <div class="topbar-right">
+      <span><span class="status-dot monitoring" id="statusDot"></span> <span id="botStatus">MONITORING</span></span>
+      <span class="badge badge-paper" id="modeBadge">PAPER</span>
+      <span class="badge badge-testnet" id="netBadge">TESTNET</span>
+      <div class="topbar-sep"></div>
+      <span>Cycle <strong id="cycle">0</strong></span>
+      <span>Last: <span id="lastCycle">--:--:--</span></span>
+      <span>Now: <span id="clock"></span></span>
+    </div>
+  </header>
+
+  <div class="content">
+    <div id="killBanner" class="alert-banner kill" style="display:none">KILL SWITCH ACTIVATED — ALL TRADING HALTED</div>
+    <div id="ddHaltBanner" class="alert-banner kill" style="display:none">ACCOUNT DRAWDOWN HALT — <span id="ddPct">0</span>% FROM PEAK $<span id="ddPeak">0</span></div>
+    <div id="lossHaltBanner" class="alert-banner loss-halt" style="display:none">CONSECUTIVE LOSS HALT — <span id="lossCount">0</span> LOSSES</div>
+
+    <!-- KPIs — Row 1: Overview -->
+    <div class="kpi-row">
+      <div class="kpi">
+        <div class="kpi-label">Balance</div>
+        <div class="kpi-desc">Current portfolio value</div>
+        <div class="kpi-value" id="balance">$0.00</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Total P&amp;L</div>
+        <div class="kpi-desc">All-time performance</div>
+        <div class="kpi-value" id="sessionPnl">$0.00</div>
+        <div class="kpi-sub" id="sessionPnlPct"></div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Total Trades</div>
+        <div class="kpi-desc">All-time transactions</div>
+        <div class="kpi-value" id="totalTrades">0</div>
+        <div class="kpi-sub"><span id="tradesWon" class="positive">0</span>W / <span id="tradesLost" class="negative">0</span>L</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Win Rate</div>
+        <div class="kpi-desc">Successful trades</div>
+        <div class="kpi-value" id="winRate">&mdash;</div>
+      </div>
+    </div>
+    <!-- KPIs — Row 2: Today + Live -->
+    <div class="kpi-row">
+      <div class="kpi">
+        <div class="kpi-label">Daily P&amp;L</div>
+        <div class="kpi-desc">Today's realized gains</div>
+        <div class="kpi-value" id="dailyPnl">$0.00</div>
+        <div class="kpi-sub" id="dailyPnlPct"></div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Daily Trades</div>
+        <div class="kpi-desc">Today's transactions</div>
+        <div class="kpi-value" id="dailyTrades">0</div>
+        <div class="kpi-sub"><span id="dailyTradesWon" class="positive">0</span>W / <span id="dailyTradesLost" class="negative">0</span>L &middot; <span id="dailyWinRate">—</span></div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Open Positions</div>
+        <div class="kpi-desc">Active trades</div>
+        <div class="kpi-value" id="openPosCount">0</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Loss Streak</div>
+        <div class="kpi-desc">Consecutive losses</div>
+        <div class="kpi-value" id="lossStreak">0</div>
+      </div>
+    </div>
+
+    <!-- Performance Goals -->
+    <div class="card goals-card">
+      <div class="card-header">
+        <span>Performance Goals</span>
+        <div class="kpi-desc" style="margin-top:0;margin-bottom:0">Capital: <span id="goalsCapital">$0</span></div>
+      </div>
+      <div class="card-body no-pad">
+        <table class="goals-table">
+          <thead>
+            <tr><th></th><th>Daily</th><th>Weekly</th><th>Monthly</th><th>Yearly</th></tr>
+          </thead>
+          <tbody>
+            <tr class="goal-row">
+              <td class="goal-label">Moderate</td>
+              <td><span class="goal-pct">0.3–0.5%</span><span class="goal-usd" id="gModD"></span></td>
+              <td><span class="goal-pct">1.5–2.5%</span><span class="goal-usd" id="gModW"></span></td>
+              <td><span class="goal-pct">6–10%</span><span class="goal-usd" id="gModM"></span></td>
+              <td><span class="goal-pct">~100%</span><span class="goal-usd" id="gModY"></span></td>
+            </tr>
+            <tr class="goal-row goal-active">
+              <td class="goal-label goal-agg">Aggressive</td>
+              <td><span class="goal-pct">0.5–1%</span><span class="goal-usd" id="gAggD"></span></td>
+              <td><span class="goal-pct">2.5–5%</span><span class="goal-usd" id="gAggW"></span></td>
+              <td><span class="goal-pct">10–20%</span><span class="goal-usd" id="gAggM"></span></td>
+              <td><span class="goal-pct">~200%+</span><span class="goal-usd" id="gAggY"></span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Instruments -->
+    <div class="grid-5" id="instruments"></div>
+
+    <!-- P&L Charts -->
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <span>Profit Over Time</span>
+            <div class="kpi-desc" style="margin-top:2px;margin-bottom:0">Daily P&amp;L</div>
+          </div>
+          <div class="card-header-right">
+            <span class="chart-legend"><span class="legend-dot" id="dailyLegendDot" style="background:var(--muted)"></span> Today</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="chart-wrap"><canvas id="dailyPnlChart"></canvas></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <span>Equity Curve</span>
+            <div class="kpi-desc" style="margin-top:2px;margin-bottom:0">Day-by-day cumulative P&amp;L</div>
+          </div>
+          <div class="card-header-right">
+            <span class="chart-legend"><span class="legend-dot" id="totalLegendDot" style="background:var(--muted)"></span> Daily</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="chart-wrap"><canvas id="totalEquityChart"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Positions -->
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <span>Open Positions</span>
+          <div class="kpi-desc" style="margin-top:2px;margin-bottom:0">Currently active trades</div>
+        </div>
+      </div>
+      <div class="card-body no-pad">
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Symbol</th><th>Side</th><th>Size USD</th><th>Entry</th><th>Current</th><th>SL</th><th>TP</th><th>P&amp;L $</th><th>P&amp;L %</th><th></th></tr></thead>
+            <tbody id="positionsTable"><tr class="empty-row"><td colspan="11">No open positions</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Trade History -->
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <span>Recent Trades</span>
+          <div class="kpi-desc" style="margin-top:2px;margin-bottom:0">Executed transactions</div>
+        </div>
+        <span class="card-header-count" id="tradeCount">0 trades</span>
+      </div>
+      <div class="card-body no-pad">
+        <div class="table-scroll">
+          <table class="tv-trades">
+            <thead><tr><th>Trade #</th><th>Type</th><th>Date &amp; Time</th><th>Signal</th><th>Price</th><th>Position Size</th><th>Net P&amp;L</th><th>Cumulative P&amp;L</th></tr></thead>
+            <tbody id="tradesTable"><tr class="empty-row"><td colspan="8">No trades yet</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Performance Attribution -->
+    <div class="card">
+      <div class="card-header">
+        <span>Performance Attribution</span>
+        <div class="card-header-right">
+          <button class="attr-toggle active" id="attrAllTime" onclick="setAttrFilter('all')">All Time</button>
+          <button class="attr-toggle" id="attrToday" onclick="setAttrFilter('today')">Today</button>
+          <span class="card-header-count" id="attrTotal">$0.00</span>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="attr-grid">
+          <!-- By Strategy -->
+          <div class="attr-section">
+            <div class="attr-title">By Strategy</div>
+            <div class="table-scroll">
+              <table class="attr-table">
+                <thead><tr><th>Strategy</th><th>P&amp;L</th><th>Trades</th><th>Win Rate</th><th>Profit Factor</th><th>Avg Win</th><th>Avg Loss</th></tr></thead>
+                <tbody id="attrStrategy"><tr class="empty-row"><td colspan="7">No data</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+          <!-- By Symbol -->
+          <div class="attr-section">
+            <div class="attr-title">By Symbol</div>
+            <div class="table-scroll">
+              <table class="attr-table">
+                <thead><tr><th>Symbol</th><th>P&amp;L</th><th>Trades</th><th>Win Rate</th></tr></thead>
+                <tbody id="attrSymbol"><tr class="empty-row"><td colspan="4">No data</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+          <!-- By Exit Reason -->
+          <div class="attr-section">
+            <div class="attr-title">By Exit Reason</div>
+            <div class="table-scroll">
+              <table class="attr-table">
+                <thead><tr><th>Reason</th><th>P&amp;L</th><th>Count</th></tr></thead>
+                <tbody id="attrExit"><tr class="empty-row"><td colspan="3">No data</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+          <!-- By Day -->
+          <div class="attr-section">
+            <div class="attr-title">By Day</div>
+            <div class="table-scroll">
+              <table class="attr-table">
+                <thead><tr><th>Date</th><th>P&amp;L</th><th>Trades</th><th>W/L</th></tr></thead>
+                <tbody id="attrDay"><tr class="empty-row"><td colspan="4">No data</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Correlation Matrix -->
+    <div class="card">
+      <div class="card-header">
+        <span>Correlation Matrix</span>
+        <span class="card-header-count">50-candle rolling</span>
+      </div>
+      <div class="card-body">
+        <div class="corr-grid" id="corrMatrix">No data yet</div>
+      </div>
+    </div>
+
+    <!-- Risk Config -->
+    <div class="card">
+      <div class="card-header">Risk Configuration</div>
+      <div class="card-body">
+        <div class="risk-grid" id="riskGauges"></div>
+      </div>
+    </div>
+  </div>
+
+  <footer class="footer">HyperLiquid Commodities Bot &middot; Mission Control &middot; <span id="footerClock"></span></footer>
+</div>
+
+<div class="toast-container" id="toasts"></div>
+
+<script src="/static/js/app.js?v=3"></script>
+</body>
+</html>

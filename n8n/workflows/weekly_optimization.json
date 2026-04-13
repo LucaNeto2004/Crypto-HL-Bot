@@ -1,0 +1,131 @@
+{
+  "name": "HL Bot — Weekly Optimization (Review Flow)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "weeks", "weeksInterval": 1, "triggerAtDay": 0, "triggerAtHour": 6 }]
+        }
+      },
+      "name": "Sunday 6AM Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5050/api/trigger/research",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "auto_deploy", "value": "false" }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Trigger Research (No Deploy)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "amount": 600,
+        "unit": "seconds"
+      },
+      "name": "Wait 10 Minutes",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "url": "=http://localhost:5050/api/job/{{ $node['Trigger Research (No Deploy)'].json.job_id }}",
+        "options": {}
+      },
+      "name": "Poll Job Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [{ "value1": "={{ $json.status }}", "value2": "completed" }]
+        }
+      },
+      "name": "Is Complete?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1130, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:5050/api/research/results",
+        "options": {}
+      },
+      "name": "Get Results",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1350, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst results = data.results || [];\n\n// Build summary table\nlet lines = ['```'];\nlines.push('Strategy             Symbol         Grade  Sharpe    WR   PF   Trades');\nlines.push('─'.repeat(72));\n\nlet deployable = 0;\nlet total = results.length;\n\nfor (const r of results) {\n  const strategy = r.strategy.padEnd(20);\n  const symbol = r.symbol.replace('xyz:', '').padEnd(14);\n  const grade = r.grade.padStart(3);\n  const sharpe = r.sharpe.toFixed(2).padStart(7);\n  const wr = (r.win_rate.toFixed(1) + '%').padStart(6);\n  const pf = r.profit_factor.toFixed(2).padStart(5);\n  const trades = String(r.num_trades).padStart(5);\n  const flag = r.deployable ? '✅' : '❌';\n  lines.push(`${flag} ${strategy} ${symbol} ${grade} ${sharpe} ${wr} ${pf} ${trades}`);\n  if (r.deployable) deployable++;\n}\n\nlines.push('```');\nlines.push(`\\n**${deployable}/${total}** strategies ready to deploy.`);\nlines.push('\\nTo approve, call: `POST /api/research/approve` with `{\"approve_all\": true}`');\n\nreturn [{ json: { summary: lines.join('\\n'), deployable, total } }];"
+      },
+      "name": "Format Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1570, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DISCORD_WEBHOOK_REPORTS }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"embeds\":[{\"title\":\"📊 Weekly Optimization — Pending Review\",\"color\":15105570,\"description\":\"{{ $json.summary }}\",\"footer\":{\"text\":\"Approve via dashboard or POST /api/research/approve\"}}]}",
+        "options": {}
+      },
+      "name": "Send Results to Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1790, 200]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.DISCORD_WEBHOOK_REPORTS }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "embeds",
+              "value": "=[{\"title\":\"Weekly Optimization — Still Running\",\"color\":15905356,\"description\":\"Job may need more time. Check dashboard.\",\"fields\":[{\"name\":\"Status\",\"value\":\"{{ $json.status }}\",\"inline\":true},{\"name\":\"Error\",\"value\":\"{{ $json.error || 'None' }}\",\"inline\":true}]}]"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Notify Discord — Pending",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1350, 400]
+    }
+  ],
+  "connections": {
+    "Sunday 6AM Trigger": { "main": [[{ "node": "Trigger Research (No Deploy)", "type": "main", "index": 0 }]] },
+    "Trigger Research (No Deploy)": { "main": [[{ "node": "Wait 10 Minutes", "type": "main", "index": 0 }]] },
+    "Wait 10 Minutes": { "main": [[{ "node": "Poll Job Status", "type": "main", "index": 0 }]] },
+    "Poll Job Status": { "main": [[{ "node": "Is Complete?", "type": "main", "index": 0 }]] },
+    "Is Complete?": {
+      "main": [
+        [{ "node": "Get Results", "type": "main", "index": 0 }],
+        [{ "node": "Notify Discord — Pending", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Results": { "main": [[{ "node": "Format Summary", "type": "main", "index": 0 }]] },
+    "Format Summary": { "main": [[{ "node": "Send Results to Discord", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

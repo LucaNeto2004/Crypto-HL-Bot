@@ -1,0 +1,50 @@
+{
+  "name": "HL Bot — Daily Report",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "hours", "hoursInterval": 24, "triggerAtHour": 22 }]
+        }
+      },
+      "name": "Daily Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:5050/api/report",
+        "options": {}
+      },
+      "name": "Fetch Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.DISCORD_WEBHOOK_REPORTS }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "embeds",
+              "value": "=[{\"title\":\"Daily Report — {{ $json.timestamp.split('T')[0] }}\",\"color\":{{ $json.daily_pnl >= 0 ? 2278117 : 15684676 }},\"fields\":[{\"name\":\"Balance\",\"value\":\"${{ $json.balance.toFixed(2) }}\",\"inline\":true},{\"name\":\"Daily P&L\",\"value\":\"${{ $json.daily_pnl.toFixed(2) }}\",\"inline\":true},{\"name\":\"Session P&L\",\"value\":\"${{ $json.session_pnl.toFixed(2) }}\",\"inline\":true},{\"name\":\"Trades\",\"value\":\"{{ $json.total_trades }} ({{ $json.won }}W / {{ $json.lost }}L)\",\"inline\":true},{\"name\":\"Win Rate\",\"value\":\"{{ $json.win_rate }}%\",\"inline\":true},{\"name\":\"Loss Streak\",\"value\":\"{{ $json.consecutive_losses }}\",\"inline\":true}]}]"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Send to Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [690, 300]
+    }
+  ],
+  "connections": {
+    "Daily Trigger": { "main": [[{ "node": "Fetch Report", "type": "main", "index": 0 }]] },
+    "Fetch Report": { "main": [[{ "node": "Send to Discord", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

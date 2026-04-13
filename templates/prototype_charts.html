@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lightweight Charts — Prototype</title>
+  <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    :root {
+      --bg: #1a1f2b;
+      --card: #222839;
+      --border: #2e3548;
+      --text: #e0e6f0;
+      --muted: #6b7a99;
+      --cyan: #22d3ee;
+      --green: #34d399;
+      --red: #f87171;
+      --amber: #fbbf24;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', -apple-system, sans-serif;
+      padding: 24px;
+    }
+    h1 {
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: var(--cyan);
+      margin-bottom: 8px;
+    }
+    .subtitle {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 24px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .card-header .price {
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--green);
+    }
+    .card-header .price.down { color: var(--red); }
+    .full-width { grid-column: 1 / -1; }
+    .chart-container { height: 320px; }
+    .chart-container.tall { height: 400px; }
+
+    .comparison {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      margin-top: 32px;
+    }
+    .comparison h2 {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .badge-long { background: rgba(52,211,153,0.15); color: var(--green); }
+    .badge-short { background: rgba(248,113,113,0.15); color: var(--red); }
+
+    @media (max-width: 900px) {
+      .grid, .comparison { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<h1>TradingView Lightweight Charts — Prototype</h1>
+<p class="subtitle">Drop-in replacement for Chart.js equity curves + new candlestick views for each instrument</p>
+
+<!-- Instrument Candlestick Charts -->
+<div class="grid">
+  <div class="card">
+    <div class="card-header">
+      <span>xyz:GOLD — 15m</span>
+      <span class="price" id="goldPrice">$2,648.30</span>
+    </div>
+    <div class="chart-container" id="goldChart"></div>
+  </div>
+  <div class="card">
+    <div class="card-header">
+      <span>xyz:SILVER — 15m</span>
+      <span class="price" id="silverPrice">$31.42</span>
+    </div>
+    <div class="chart-container" id="silverChart"></div>
+  </div>
+  <div class="card">
+    <div class="card-header">
+      <span>xyz:BRENTOIL — 15m</span>
+      <span class="price down" id="oilPrice">$71.85</span>
+    </div>
+    <div class="chart-container" id="oilChart"></div>
+  </div>
+  <div class="card">
+    <div class="card-header">
+      <span>xyz:NATGAS — 15m</span>
+      <span class="price" id="natgasPrice">$3.92</span>
+    </div>
+    <div class="chart-container" id="natgasChart"></div>
+  </div>
+</div>
+
+<!-- Full-width Equity Curve -->
+<div class="grid">
+  <div class="card full-width">
+    <div class="card-header">
+      <span>Portfolio Equity Curve</span>
+      <span class="price">+$342.18</span>
+    </div>
+    <div class="chart-container tall" id="equityChart"></div>
+  </div>
+</div>
+
+<!-- P&L per trade (histogram) -->
+<div class="grid">
+  <div class="card full-width">
+    <div class="card-header">
+      <span>Trade P&L Distribution</span>
+      <span>32 trades</span>
+    </div>
+    <div class="chart-container" id="pnlChart"></div>
+  </div>
+</div>
+
+<script>
+// ── Helpers ──────────────────────────────────────────────
+const chartColors = {
+  bg: '#222839',
+  grid: '#2e3548',
+  text: '#6b7a99',
+  crosshair: '#4b5672',
+  upColor: '#34d399',
+  downColor: '#f87171',
+  wickUp: '#34d399',
+  wickDown: '#f87171',
+};
+
+function makeChartOptions(container) {
+  return {
+    layout: { background: { color: chartColors.bg }, textColor: chartColors.text },
+    grid: {
+      vertLines: { color: chartColors.grid },
+      horzLines: { color: chartColors.grid },
+    },
+    crosshair: {
+      vertLine: { color: chartColors.crosshair, labelBackgroundColor: '#2e3548' },
+      horzLine: { color: chartColors.crosshair, labelBackgroundColor: '#2e3548' },
+    },
+    timeScale: {
+      borderColor: chartColors.grid,
+      timeVisible: true,
+      secondsVisible: false,
+    },
+    rightPriceScale: { borderColor: chartColors.grid },
+  };
+}
+
+// ── Generate sample 15m candle data ─────────────────────
+function generateCandles(basePrice, volatility, count = 200) {
+  const data = [];
+  let price = basePrice;
+  const now = Math.floor(Date.now() / 1000);
+  const interval = 15 * 60; // 15 minutes
+
+  for (let i = count; i >= 0; i--) {
+    const time = now - i * interval;
+    const change = (Math.random() - 0.48) * volatility;
+    const open = price;
+    const close = price + change;
+    const high = Math.max(open, close) + Math.random() * volatility * 0.5;
+    const low = Math.min(open, close) - Math.random() * volatility * 0.5;
+    price = close;
+    data.push({
+      time,
+      open: parseFloat(open.toFixed(2)),
+      high: parseFloat(high.toFixed(2)),
+      low: parseFloat(low.toFixed(2)),
+      close: parseFloat(close.toFixed(2)),
+    });
+  }
+  return data;
+}
+
+// ── Generate equity curve data ──────────────────────────
+function generateEquityCurve(startBalance, count = 200) {
+  const data = [];
+  let balance = startBalance;
+  const now = Math.floor(Date.now() / 1000);
+  const interval = 15 * 60;
+
+  for (let i = count; i >= 0; i--) {
+    const time = now - i * interval;
+    balance += (Math.random() - 0.46) * 8; // slight upward bias
+    data.push({ time, value: parseFloat(balance.toFixed(2)) });
+  }
+  return data;
+}
+
+// ── Generate P&L histogram ──────────────────────────────
+function generatePnLBars(count = 32) {
+  const data = [];
+  const now = Math.floor(Date.now() / 1000);
+  const interval = 3600; // 1 trade per hour roughly
+
+  for (let i = count; i >= 0; i--) {
+    const time = now - i * interval;
+    const pnl = (Math.random() - 0.42) * 50; // slight positive bias
+    data.push({
+      time,
+      value: parseFloat(pnl.toFixed(2)),
+      color: pnl >= 0 ? 'rgba(52,211,153,0.8)' : 'rgba(248,113,113,0.8)',
+    });
+  }
+  return data;
+}
+
+// ── Create Candlestick Charts ───────────────────────────
+function createCandleChart(containerId, basePrice, volatility) {
+  const container = document.getElementById(containerId);
+  const chart = LightweightCharts.createChart(container, {
+    ...makeChartOptions(container),
+    width: container.clientWidth,
+    height: container.clientHeight,
+  });
+
+  const series = chart.addCandlestickSeries({
+    upColor: chartColors.upColor,
+    downColor: chartColors.downColor,
+    wickUpColor: chartColors.wickUp,
+    wickDownColor: chartColors.wickDown,
+    borderVisible: false,
+  });
+
+  const candles = generateCandles(basePrice, volatility);
+  series.setData(candles);
+
+  // Add EMA overlay (simulated)
+  const ema9 = chart.addLineSeries({
+    color: '#22d3ee',
+    lineWidth: 1,
+    priceLineVisible: false,
+    lastValueVisible: false,
+  });
+  const ema21 = chart.addLineSeries({
+    color: '#fbbf24',
+    lineWidth: 1,
+    priceLineVisible: false,
+    lastValueVisible: false,
+  });
+
+  // Simple EMA calculation
+  function calcEMA(data, period) {
+    const k = 2 / (period + 1);
+    const result = [];
+    let ema = data[0].close;
+    for (const d of data) {
+      ema = d.close * k + ema * (1 - k);
+      result.push({ time: d.time, value: parseFloat(ema.toFixed(2)) });
+    }
+    return result;
+  }
+
+  ema9.setData(calcEMA(candles, 9));
+  ema21.setData(calcEMA(candles, 21));
+
+  // Add position marker (example)
+  if (Math.random() > 0.5) {
+    const lastCandle = candles[candles.length - 1];
+    series.setMarkers([{
+      time: lastCandle.time,
+      position: 'belowBar',
+      color: chartColors.upColor,
+      shape: 'arrowUp',
+      text: 'LONG',
+    }]);
+  }
+
+  chart.timeScale().fitContent();
+
+  // Responsive
+  new ResizeObserver(() => {
+    chart.applyOptions({ width: container.clientWidth });
+  }).observe(container);
+
+  return chart;
+}
+
+// ── Create Equity Curve ─────────────────────────────────
+function createEquityChart(containerId) {
+  const container = document.getElementById(containerId);
+  const chart = LightweightCharts.createChart(container, {
+    ...makeChartOptions(container),
+    width: container.clientWidth,
+    height: container.clientHeight,
+  });
+
+  const data = generateEquityCurve(10000);
+
+  // Area series with gradient
+  const series = chart.addAreaSeries({
+    topColor: 'rgba(34,211,238,0.3)',
+    bottomColor: 'rgba(34,211,238,0.02)',
+    lineColor: '#22d3ee',
+    lineWidth: 2,
+    priceLineVisible: false,
+  });
+  series.setData(data);
+
+  // Baseline at start value
+  const baseline = chart.addLineSeries({
+    color: 'rgba(107,122,153,0.3)',
+    lineWidth: 1,
+    lineStyle: 2, // dashed
+    priceLineVisible: false,
+    lastValueVisible: false,
+  });
+  baseline.setData([
+    { time: data[0].time, value: 10000 },
+    { time: data[data.length - 1].time, value: 10000 },
+  ]);
+
+  chart.timeScale().fitContent();
+
+  new ResizeObserver(() => {
+    chart.applyOptions({ width: container.clientWidth });
+  }).observe(container);
+
+  return chart;
+}
+
+// ── Create P&L Histogram ────────────────────────────────
+function createPnLChart(containerId) {
+  const container = document.getElementById(containerId);
+  const chart = LightweightCharts.createChart(container, {
+    ...makeChartOptions(container),
+    width: container.clientWidth,
+    height: container.clientHeight,
+  });
+
+  const series = chart.addHistogramSeries({
+    priceFormat: { type: 'price', precision: 2 },
+    priceLineVisible: false,
+  });
+  series.setData(generatePnLBars());
+
+  chart.timeScale().fitContent();
+
+  new ResizeObserver(() => {
+    chart.applyOptions({ width: container.clientWidth });
+  }).observe(container);
+
+  return chart;
+}
+
+// ── Initialize all charts ───────────────────────────────
+createCandleChart('goldChart', 2648, 8);
+createCandleChart('silverChart', 31.4, 0.3);
+createCandleChart('oilChart', 71.8, 0.8);
+createCandleChart('natgasChart', 3.9, 0.06);
+createEquityChart('equityChart');
+createPnLChart('pnlChart');
+</script>
+
+</body>
+</html>

@@ -1,0 +1,126 @@
+{
+  "name": "HL Bot — Event Router",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "hl-bot-events",
+        "options": {}
+      },
+      "name": "Webhook Receiver",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "rules": [
+            { "outputKey": "trade", "conditions": { "string": [{ "value1": "={{ $json.event }}", "value2": "trade" }] } },
+            { "outputKey": "risk", "conditions": { "string": [{ "value1": "={{ $json.event }}", "value2": "risk_blocked" }] } },
+            { "outputKey": "kill_switch", "conditions": { "string": [{ "value1": "={{ $json.event }}", "value2": "kill_switch" }] } },
+            { "outputKey": "sl_tp", "conditions": { "string": [{ "value1": "={{ $json.event }}", "value2": "sl_tp" }] } },
+            { "outputKey": "status", "conditions": { "string": [{ "value1": "={{ $json.event }}", "value2": "bot_status" }] } },
+            { "outputKey": "report", "conditions": { "string": [{ "value1": "={{ $json.event }}", "value2": "daily_report" }] } },
+            { "outputKey": "loss", "conditions": { "string": [{ "value1": "={{ $json.event }}", "value2": "consecutive_loss" }] } }
+          ]
+        }
+      },
+      "name": "Route by Event",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.DISCORD_WEBHOOK_TRADES }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "content",
+              "value": "={{ $json.event === 'trade' ? ($json.side.includes('long') ? '📈' : '📉') + ' **' + $json.side.toUpperCase() + '** ' + $json.symbol + ' @ $' + $json.price + ($json.pnl ? ' | P&L: $' + $json.pnl : '') : '' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Discord — Trades",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [750, 100]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.DISCORD_WEBHOOK_ALERTS }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "content",
+              "value": "=⚠️ **Risk Gate Blocked** {{ $json.symbol }}: {{ $json.reason }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Discord — Risk",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [750, 220]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.DISCORD_WEBHOOK_ALERTS }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "content",
+              "value": "=🚨 **KILL SWITCH ACTIVATED** — {{ $json.reason }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Discord — Kill Switch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [750, 340]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.DISCORD_WEBHOOK_TRADES }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "content",
+              "value": "={{ $json.exit_reason === 'stop_loss' ? '🛑 **STOP LOSS**' : '🎯 **TAKE PROFIT**' }} {{ $json.symbol }} @ ${{ $json.price }} | P&L: ${{ $json.pnl }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Discord — SL/TP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [750, 460]
+    }
+  ],
+  "connections": {
+    "Webhook Receiver": { "main": [[{ "node": "Route by Event", "type": "main", "index": 0 }]] },
+    "Route by Event": {
+      "main": [
+        [{ "node": "Discord — Trades", "type": "main", "index": 0 }],
+        [{ "node": "Discord — Risk", "type": "main", "index": 0 }],
+        [{ "node": "Discord — Kill Switch", "type": "main", "index": 0 }],
+        [{ "node": "Discord — SL/TP", "type": "main", "index": 0 }],
+        [],
+        [],
+        []
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" }
+}

@@ -1,0 +1,31 @@
+{
+  "strategy": "momentum_v15",
+  "symbol": "HYPE",
+  "parameters": {
+    "rsi_long_min": 50,
+    "rsi_long_max": 80,
+    "rsi_short_max": 50,
+    "rsi_short_min": 20,
+    "atr_stop_multiplier": 0.7,
+    "trail_atr_multiplier": 0.3,
+    "vol_min": 0.0,
+    "use_regime_filter": true,
+    "slope_period": 20,
+    "min_slope": 0.1,
+    "choppy_mult": 0.8,
+    "max_atr_ratio": 2.0,
+    "signal_reversal_rsi_long": 40,
+    "signal_reversal_rsi_short": 60
+  },
+  "metrics": {
+    "grade": "TV",
+    "sharpe": null,
+    "max_drawdown": 0.71,
+    "win_rate": 49.03,
+    "profit_factor": 1.845,
+    "num_trades": 5283,
+    "total_return_pct": 76.69
+  },
+  "deployed_at": "2026-04-11T13:00:00",
+  "source": "Gold v15 params on HYPE 5M — TV backtest validated, maxATR=2.0"
+}
