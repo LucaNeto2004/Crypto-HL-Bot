@@ -353,7 +353,9 @@ class TestGroupExposure:
 
 class TestDuplicatePosition:
     def test_allows_same_direction_pyramid(self):
-        gate = make_gate()
+        # Override max_pyramiding so the test stays valid in both bots
+        # (commodities default lets xyz:* pyramid; crypto default is 1).
+        gate = make_gate(max_pyramiding={"xyz:GOLD": 3})
         gate.portfolio.positions = {
             "xyz:GOLD": {"side": "long", "size_usd": 1000},
         }
