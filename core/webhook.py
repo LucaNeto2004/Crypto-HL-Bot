@@ -221,6 +221,12 @@ class WebhookServer:
             if position_id:
                 signal._tv_position_id = position_id
 
+            # Expose base ATR stop multiplier so execution.py can back-calc the
+            # ATR and apply the adaptive_stops.json override. Without this the
+            # adaptive SL/TP block silently no-ops on every webhook entry.
+            if hl_atr is not None and current_price is not None:
+                signal.atr_stop_mult = atr_stop_mult
+
             # Set trail offset from payload (now using HL values)
             if trail_offset:
                 signal._trail_offset_value = float(trail_offset)
