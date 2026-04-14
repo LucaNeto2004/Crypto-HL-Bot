@@ -49,6 +49,16 @@ class MomentumV15Strategy(BaseStrategy):
         self.choppy_mult = 0.8
         self.max_atr_ratio = 2.0  # ETH + HYPE; deployed JSON overrides to 2.0 (was hardcoded 1.5 — stale)
 
+        # ---- Momentum regime gate (2026-04-14, validated on 1307 live trades) ----
+        # Live bucket analysis: avg $/trade by ADX bucket climbs monotonically from
+        # -$0.17 at ADX 0-18 to +$0.78 at ADX 40+. Blocking low-ADX + flat-slope
+        # entries captured +$0.63 per trade lift across the full history.
+        # See research/2026-04-14_174500_momentum-regime-gate.md for the analysis.
+        self.regime_gate_enabled = True        # Master flag
+        self.regime_gate_shadow  = True         # Shadow: log "would skip" but don't block
+        self.regime_gate_adx_min = 25.0         # ADX floor
+        self.regime_gate_slope_min = 0.002      # |EMA50 slope over 20 bars| floor (0.2%)
+
     def evaluate(self, symbol: str, df: pd.DataFrame, features: dict) -> Optional[Signal]:
         if not features or len(df) < 52:
             return None
@@ -72,6 +82,27 @@ class MomentumV15Strategy(BaseStrategy):
         if self.use_regime_filter and not self._check_regime(df):
             log.debug(f"{symbol}: regime filter blocked entry")
             return None
+
+        # ---- Momentum regime gate ----
+        # Block entries outside the high-edge regime identified from live bucket analysis.
+        # Shadow mode logs what would be skipped without actually blocking the trade.
+        if self.regime_gate_enabled:
+            adx_prev = float(prev.get("adx", 0))
+            ema50_slope_prev = float(prev.get("ema_50_slope") or 0.0)
+            abs_slope = abs(ema50_slope_prev)
+            gate_pass = (adx_prev >= self.regime_gate_adx_min
+                         and abs_slope >= self.regime_gate_slope_min)
+            if not gate_pass:
+                msg = (f"REGIME_GATE {symbol}: blocked — "
+                       f"ADX={adx_prev:.1f} (need >={self.regime_gate_adx_min}) "
+                       f"|slope|={abs_slope*100:.3f}% (need >={self.regime_gate_slope_min*100:.2f}%)")
+                if self.regime_gate_shadow:
+                    log.info(f"SHADOW {msg}  [shadow mode: NOT blocking]")
+                else:
+                    log.info(msg)
+                    return None
+            else:
+                log.debug(f"REGIME_GATE {symbol}: pass — ADX={adx_prev:.1f} |slope|={abs_slope*100:.3f}%")
 
         log.debug(
             f"{symbol} [prev]: price={price_prev:.2f} EMA9={ema9_prev:.2f} "

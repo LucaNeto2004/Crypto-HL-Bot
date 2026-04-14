@@ -45,6 +45,10 @@ class FeatureEngine:
         df["ema_20"] = ta.trend.ema_indicator(df["close"], window=20)
         df["ema_21"] = ta.trend.ema_indicator(df["close"], window=21)
         df["ema_50"] = ta.trend.ema_indicator(df["close"], window=50)
+        # 20-bar EMA50 slope — used by the momentum regime gate.
+        # Live-data bucket analysis on 1307 trades showed strong correlation
+        # between avg PnL and |ema_50_slope| — flat tape loses, steep trends win.
+        df["ema_50_slope"] = df["ema_50"].pct_change(20)
 
         # MACD
         macd = ta.trend.MACD(df["close"])
@@ -465,6 +469,7 @@ class FeatureEngine:
             "ema_9": latest.get("ema_9"),
             "ema_21": latest.get("ema_21"),
             "ema_50": latest.get("ema_50"),
+            "ema_50_slope": latest.get("ema_50_slope"),
             "trend": latest.get("trend"),
             "macd": latest.get("macd"),
             "macd_signal": latest.get("macd_signal"),

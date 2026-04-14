@@ -228,6 +228,16 @@ class RiskGate:
             return True, ""
         if self._account_peak_balance <= 0:
             return True, ""
+        # Guard against startup race: if account_balance hasn't been populated
+        # from paper_state.json yet, a webhook that arrives in the first few
+        # seconds after restart would see balance=0 and trigger a false 100% DD
+        # halt. Skip the check when balance is not yet loaded.
+        if self.portfolio.account_balance <= 0:
+            log.warning(
+                f"_check_account_drawdown: portfolio.account_balance=0 "
+                f"(likely startup race), skipping DD check for this signal"
+            )
+            return True, ""
         dd_pct = (self._account_peak_balance - self.portfolio.account_balance) / self._account_peak_balance
         if dd_pct >= self.rules.max_account_drawdown_pct:
             self.account_dd_halt = True
