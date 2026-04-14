@@ -92,17 +92,15 @@ class MomentumV15Strategy(BaseStrategy):
             abs_slope = abs(ema50_slope_prev)
             gate_pass = (adx_prev >= self.regime_gate_adx_min
                          and abs_slope >= self.regime_gate_slope_min)
-            if not gate_pass:
-                msg = (f"REGIME_GATE {symbol}: blocked — "
-                       f"ADX={adx_prev:.1f} (need >={self.regime_gate_adx_min}) "
-                       f"|slope|={abs_slope*100:.3f}% (need >={self.regime_gate_slope_min*100:.2f}%)")
-                if self.regime_gate_shadow:
-                    log.info(f"SHADOW {msg}  [shadow mode: NOT blocking]")
-                else:
-                    log.info(msg)
-                    return None
+            gate_stats = f"ADX={adx_prev:.1f} |slope|={abs_slope*100:.3f}%"
+            if gate_pass:
+                log.info(f"REGIME_GATE {symbol}: PASS {gate_stats}")
+            elif self.regime_gate_shadow:
+                log.info(f"REGIME_GATE {symbol}: SHADOW_BLOCK {gate_stats} "
+                         f"(need ADX>={self.regime_gate_adx_min} |slope|>={self.regime_gate_slope_min*100:.2f}%)")
             else:
-                log.debug(f"REGIME_GATE {symbol}: pass — ADX={adx_prev:.1f} |slope|={abs_slope*100:.3f}%")
+                log.info(f"REGIME_GATE {symbol}: BLOCK {gate_stats}")
+                return None
 
         log.debug(
             f"{symbol} [prev]: price={price_prev:.2f} EMA9={ema9_prev:.2f} "

@@ -19,7 +19,27 @@ from config.settings import BotConfig, INSTRUMENTS
 from strategies.base import Signal, SignalType
 from utils.logger import setup_logger
 
+# Make shared/ importable for vault_writer (sibling of bot dirs)
+import sys as _sys
+_SHARED_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "shared"))
+if _SHARED_DIR not in _sys.path:
+    _sys.path.insert(0, _SHARED_DIR)
+try:
+    import vault_writer  # type: ignore
+except Exception:
+    vault_writer = None  # type: ignore
+
 log = setup_logger("execution")
+
+
+def _note_trade_safe(trade: dict) -> None:
+    """Never let vault write break the trading loop."""
+    if vault_writer is None:
+        return
+    try:
+        vault_writer.write_trade_note(trade)
+    except Exception as e:
+        log.warning("vault_writer failed: %s", e)
 
 
 @dataclass
@@ -104,6 +124,8 @@ class PaperTrader:
 
     def _save_state(self):
         """Persist paper state to JSON for dashboard to read."""
+        import uuid
+        tmp = None
         try:
             state = {
                 "balance": self.balance,
@@ -123,13 +145,22 @@ class PaperTrader:
                     for t in self.trade_history
                 ],
             }
-            tmp = PAPER_STATE_FILE + ".tmp"
+            # Unique tmp name per call to avoid the race where two concurrent
+            # _save_state() calls both write to the same ".tmp" and the second
+            # os.replace() fails with ENOENT because the first one consumed it.
+            tmp = f"{PAPER_STATE_FILE}.{uuid.uuid4().hex[:8]}.tmp"
             with open(tmp, "w") as f:
                 json.dump(state, f, indent=2)
             os.replace(tmp, PAPER_STATE_FILE)
+            tmp = None
             self._last_mtime = os.path.getmtime(PAPER_STATE_FILE)
         except Exception as e:
             log.error(f"Failed to save paper state: {e}")
+            if tmp and os.path.exists(tmp):
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
 
     def _load_state(self):
         """Load paper state from disk if it exists."""
@@ -474,6 +505,17 @@ class PaperTrader:
         self._save_state()
         closed_count = len(matching)
         log.info(f"[PAPER] Closed {closed_count} {side} {signal.symbol} @ {price:.2f} | PnL: ${total_pnl:.2f} | reason: {exit_reason}")
+        _note_trade_safe({
+            "bot": "crypto",
+            "symbol": signal.symbol,
+            "side": side,
+            "exit_price": price,
+            "size": total_size,
+            "pnl": total_pnl,
+            "exit_reason": exit_reason,
+            "strategy": signal.strategy_name,
+            "balance_after": self.balance,
+        })
         return record
 
     def _close_single_position(self, pos_id: str, price: float, exit_reason: str) -> Optional[TradeRecord]:
@@ -520,6 +562,21 @@ class PaperTrader:
         )
 
         log.info(f"[PAPER] Closed {pos_id} {side} @ {price:.2f} | PnL: ${pnl:.2f} | reason: {exit_reason}")
+        _note_trade_safe({
+            "bot": "crypto",
+            "symbol": symbol,
+            "side": side,
+            "entry_price": pos.get("entry_price"),
+            "exit_price": price,
+            "size": pos.get("size"),
+            "size_usd": pos.get("size_usd"),
+            "pnl": pnl,
+            "exit_reason": exit_reason,
+            "strategy": pos.get("strategy"),
+            "stop_loss": pos.get("stop_loss"),
+            "take_profit": pos.get("take_profit"),
+            "balance_after": self.balance,
+        })
         return record
 
     def check_sl_tp(self, current_prices: dict[str, float],

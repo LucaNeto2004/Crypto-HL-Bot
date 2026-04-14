@@ -235,17 +235,15 @@ class WebhookServer:
                     abs_slope = abs(gate_slope)
                     gate_pass = (gate_adx >= REGIME_GATE_ADX_MIN
                                  and abs_slope >= REGIME_GATE_SLOPE_MIN)
-                    if not gate_pass:
-                        gate_msg = (f"REGIME_GATE {symbol}: blocked — "
-                                    f"ADX={gate_adx:.1f} (need >={REGIME_GATE_ADX_MIN}) "
-                                    f"|slope|={abs_slope*100:.3f}% (need >={REGIME_GATE_SLOPE_MIN*100:.2f}%)")
-                        if REGIME_GATE_SHADOW:
-                            log.info(f"SHADOW {gate_msg}  [shadow mode: NOT blocking]")
-                        else:
-                            log.info(gate_msg)
-                            return {"status": "blocked", "reason": "regime_gate"}
+                    gate_stats = f"ADX={gate_adx:.1f} |slope|={abs_slope*100:.3f}%"
+                    if gate_pass:
+                        log.info(f"REGIME_GATE {symbol}: PASS {gate_stats}")
+                    elif REGIME_GATE_SHADOW:
+                        log.info(f"REGIME_GATE {symbol}: SHADOW_BLOCK {gate_stats} "
+                                 f"(need ADX>={REGIME_GATE_ADX_MIN} |slope|>={REGIME_GATE_SLOPE_MIN*100:.2f}%)")
                     else:
-                        log.debug(f"REGIME_GATE {symbol}: pass — ADX={gate_adx:.1f} |slope|={abs_slope*100:.3f}%")
+                        log.info(f"REGIME_GATE {symbol}: BLOCK {gate_stats}")
+                        return {"status": "blocked", "reason": "regime_gate"}
                 except Exception as e:
                     log.warning(f"REGIME_GATE compute error for {symbol}: {e}")
 
