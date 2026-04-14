@@ -41,11 +41,19 @@ PAPER_STATE_FILE = os.path.join(_BASE_DIR, "data", "paper_state.json")
 LIVE_STATE_FILE = os.path.join(_BASE_DIR, "data", "live_state.json")
 ADAPTIVE_STOPS_FILE = os.path.join(_BASE_DIR, "data", "adaptive_stops.json")
 
+# KILL SWITCH: adaptive SL/TP is disabled after a parallel-session 85-day
+# backtest printed -94% portfolio for the live profile. Do NOT re-enable
+# without a faithful backtest (rolling 90-day profile regeneration, real
+# candles, real trail/SL/PAUSE logic) showing a real edge.
+ADAPTIVE_ENABLED = False
+
 
 def _load_adaptive_stops(max_age_hours: int = 48) -> dict:
     """Read adaptive_stops.json on every entry (cheap — small file) so the bot
     picks up the nightly profile refresh without a restart. Returns {} if the
     file is missing or stale."""
+    if not ADAPTIVE_ENABLED:
+        return {}
     try:
         if not os.path.exists(ADAPTIVE_STOPS_FILE):
             return {}
