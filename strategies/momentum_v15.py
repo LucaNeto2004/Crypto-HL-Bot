@@ -58,6 +58,8 @@ class MomentumV15Strategy(BaseStrategy):
         self.regime_gate_shadow = True  # Shadow: log "would skip" but don't block
         self.regime_gate_adx_min = 25.0  # ADX floor
         self.regime_gate_slope_min = 0.002  # |EMA50 slope over 20 bars| floor (0.2%)
+        self.regime_gate_require_rising = True  # ADX must be > ADX 5 bars ago
+        self.regime_gate_rising_lookback = 5
 
     def evaluate(self, symbol: str, df: pd.DataFrame, features: dict) -> Optional[Signal]:
         if not features or len(df) < 52:
@@ -90,14 +92,25 @@ class MomentumV15Strategy(BaseStrategy):
             adx_prev = float(prev.get("adx", 0))
             ema50_slope_prev = float(prev.get("ema_50_slope") or 0.0)
             abs_slope = abs(ema50_slope_prev)
-            gate_pass = (adx_prev >= self.regime_gate_adx_min
-                         and abs_slope >= self.regime_gate_slope_min)
-            gate_stats = f"ADX={adx_prev:.1f} |slope|={abs_slope*100:.3f}%"
+            # ADX rising check: prev bar ADX vs ADX N bars earlier
+            lb = self.regime_gate_rising_lookback
+            adx_past = 0.0
+            if "adx" in df.columns and len(df) >= lb + 2:
+                past_val = df["adx"].iloc[-(lb + 2)]
+                if past_val == past_val:  # NaN check
+                    adx_past = float(past_val)
+            adx_rising = adx_prev > adx_past
+            rule_adx_ok = adx_prev >= self.regime_gate_adx_min
+            rule_slope_ok = abs_slope >= self.regime_gate_slope_min
+            rule_rising_ok = adx_rising if self.regime_gate_require_rising else True
+            gate_pass = rule_adx_ok and rule_slope_ok and rule_rising_ok
+            gate_stats = (f"ADX={adx_prev:.1f} (prev{lb}={adx_past:.1f} rising={adx_rising}) "
+                          f"|slope|={abs_slope*100:.3f}%")
             if gate_pass:
                 log.info(f"REGIME_GATE {symbol}: PASS {gate_stats}")
             elif self.regime_gate_shadow:
                 log.info(f"REGIME_GATE {symbol}: SHADOW_BLOCK {gate_stats} "
-                         f"(need ADX>={self.regime_gate_adx_min} |slope|>={self.regime_gate_slope_min*100:.2f}%)")
+                         f"[adx_ok={rule_adx_ok} slope_ok={rule_slope_ok} rising_ok={rule_rising_ok}]")
             else:
                 log.info(f"REGIME_GATE {symbol}: BLOCK {gate_stats}")
                 return None
