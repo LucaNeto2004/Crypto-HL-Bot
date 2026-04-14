@@ -38,6 +38,31 @@ class TradeRecord:
 
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PAPER_STATE_FILE = os.path.join(_BASE_DIR, "data", "paper_state.json")
+LIVE_STATE_FILE = os.path.join(_BASE_DIR, "data", "live_state.json")
+ADAPTIVE_STOPS_FILE = os.path.join(_BASE_DIR, "data", "adaptive_stops.json")
+
+
+def _load_adaptive_stops(max_age_hours: int = 48) -> dict:
+    """Read adaptive_stops.json on every entry (cheap — small file) so the bot
+    picks up the nightly profile refresh without a restart. Returns {} if the
+    file is missing or stale."""
+    try:
+        if not os.path.exists(ADAPTIVE_STOPS_FILE):
+            return {}
+        with open(ADAPTIVE_STOPS_FILE) as f:
+            data = json.load(f)
+        gen = data.get("generated_at", "")
+        if gen:
+            try:
+                stamp = datetime.fromisoformat(gen.rstrip("Z"))
+                if (datetime.utcnow() - stamp).total_seconds() > max_age_hours * 3600:
+                    return {}
+            except Exception:
+                pass
+        return data.get("symbols", {}) or {}
+    except Exception as e:
+        log.warning(f"[ADAPTIVE] Failed to read {ADAPTIVE_STOPS_FILE}: {e}")
+        return {}
 
 
 class PaperTrader:
@@ -214,6 +239,54 @@ class PaperTrader:
         # Fix SL/TP if signal price drifted from execution price
         sl = signal.stop_loss
         tp = signal.take_profit
+        _adaptive_applied = False
+        _adaptive_trail_offset = None
+        _adaptive_trail_activation = None
+
+        # --- ADAPTIVE SL/TP OVERRIDE ---------------------------------------
+        # Read the nightly adaptive_stops.json and, if the symbol has a
+        # fresh profile, override SL/TP using skew-adjusted multipliers and a
+        # regime-aware R:R target. Respects the PAUSE flag. Falls through
+        # silently if the file is missing or has no profile for the symbol.
+        _adaptive_all = _load_adaptive_stops()
+        _adaptive = _adaptive_all.get(signal.symbol) if isinstance(_adaptive_all, dict) else None
+        _base_mult = getattr(signal, "atr_stop_mult", None)
+        if _adaptive and sl is not None and _base_mult and _base_mult > 0:
+            if _adaptive.get("pause", False):
+                log.warning(
+                    f"[ADAPTIVE] {signal.symbol} PAUSED — skipping {side} entry "
+                    f"({_adaptive.get('reason', 'distribution shift')})"
+                )
+                return None
+
+            _adap_mult = _adaptive.get("long_sl_mult" if side == "long" else "short_sl_mult")
+            _target_rr = float(_adaptive.get("target_rr", 2.0))
+            _trail_mult = float(_adaptive.get("trail_mult", 0.6))
+            _trail_arm_atr = float(_adaptive.get("trail_arm_atr", 1.0))
+
+            if _adap_mult and _adap_mult > 0:
+                _sl_distance_old = abs(price - sl)
+                _atr_estimate = _sl_distance_old / _base_mult if _base_mult > 0 else 0.0
+                _sl_distance_new = _atr_estimate * float(_adap_mult)
+
+                if _sl_distance_new > 0:
+                    if side == "long":
+                        sl = price - _sl_distance_new
+                        tp = price + _sl_distance_new * _target_rr
+                    else:
+                        sl = price + _sl_distance_new
+                        tp = price - _sl_distance_new * _target_rr
+
+                    _adaptive_trail_offset = _atr_estimate * _trail_mult
+                    _adaptive_trail_activation = _atr_estimate * _trail_arm_atr
+                    _adaptive_applied = True
+
+                    log.info(
+                        f"[ADAPTIVE] {signal.symbol} {side}: base_mult={_base_mult} "
+                        f"→ {_adap_mult} (sl_dist {_sl_distance_old:.4f}→{_sl_distance_new:.4f}), "
+                        f"TP@{_target_rr}R={tp:.4f}, trail {_trail_mult}x arms@{_trail_arm_atr}ATR"
+                    )
+
         if sl is not None:
             inverted = (side == "long" and sl > price) or (side == "short" and sl < price)
             if inverted:
@@ -262,19 +335,30 @@ class PaperTrader:
         # Matches TV behavior: trail_points = activation distance, trail_offset = trail distance
         # Both are set to atr * trailATR in TV, so activation = offset
         if signal.trail_atr_mult is not None and signal.trail_atr_mult > 0:
-            trail_offset = getattr(signal, '_trail_offset_value', None)
-            if trail_offset is None:
-                # Estimate from SL distance if no explicit offset
-                if sl is not None:
-                    trail_offset = abs(price - sl)
-                else:
-                    trail_offset = price * 0.01  # fallback 1%
+            if _adaptive_applied and _adaptive_trail_offset and _adaptive_trail_activation:
+                # Adaptive path: trail arms only after price earns `trail_arm_atr`
+                # ATRs of profit, then follows by `trail_mult` ATRs.
+                trail_offset = _adaptive_trail_offset
+                trail_activation = _adaptive_trail_activation
+            else:
+                trail_offset = getattr(signal, '_trail_offset_value', None)
+                if trail_offset is None:
+                    # Estimate from SL distance if no explicit offset
+                    if sl is not None:
+                        trail_offset = abs(price - sl)
+                    else:
+                        trail_offset = price * 0.01  # fallback 1%
+                trail_activation = trail_offset  # legacy: TV trail_points = trail_offset
             position_data["trail_atr_mult"] = signal.trail_atr_mult
             position_data["trail_offset"] = trail_offset
-            position_data["trail_activation"] = trail_offset  # TV trail_points = trail_offset
+            position_data["trail_activation"] = trail_activation
             position_data["trail_active"] = False  # Not active until price moves enough
             position_data["best_price"] = price
-            log.info(f"[PAPER] Trailing stop enabled for {signal.symbol}: offset={trail_offset:.4f}, activation={trail_offset:.4f}")
+            log.info(
+                f"[PAPER] Trailing stop enabled for {signal.symbol}: "
+                f"offset={trail_offset:.4f}, activation={trail_activation:.4f}"
+                + (" (adaptive)" if _adaptive_applied else "")
+            )
 
         pos_id = self._next_pos_id(signal.symbol)
         self.positions[pos_id] = position_data
@@ -583,7 +667,71 @@ class LiveTrader:
         self.trade_history: list[TradeRecord] = []
         # Trail tracking state per symbol (mirrors paper trader logic)
         self._trail_state: dict[str, dict] = {}
+        self._load_state()
         self._set_leverage()
+
+    def _save_state(self):
+        """Persist live trail state + trade history to disk so a crash mid-session
+        doesn't wipe trailing-stop ratchets or lose trade records. Balances and
+        positions themselves live on HL — we only mirror what's bot-local."""
+        try:
+            state = {
+                "trail_state": self._trail_state,
+                "trade_history": [
+                    {
+                        "timestamp": t.timestamp.isoformat(),
+                        "symbol": t.symbol,
+                        "side": t.side,
+                        "size": t.size,
+                        "price": t.price,
+                        "strategy": t.strategy,
+                        "pnl": t.pnl,
+                        "order_id": t.order_id,
+                        "paper": t.paper,
+                        "exit_reason": t.exit_reason,
+                    }
+                    for t in self.trade_history
+                ],
+            }
+            tmp = LIVE_STATE_FILE + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(state, f, indent=2)
+            os.replace(tmp, LIVE_STATE_FILE)
+        except Exception as e:
+            log.error(f"[LIVE] Failed to save live state: {e}")
+
+    def _load_state(self):
+        """Load persisted trail state + trade history. Reconcile with HL happens
+        separately on startup — this just restores bot-local memory."""
+        try:
+            if not os.path.exists(LIVE_STATE_FILE):
+                return
+            with open(LIVE_STATE_FILE) as f:
+                state = json.load(f)
+            self._trail_state = state.get("trail_state", {}) or {}
+            self.trade_history = [
+                TradeRecord(
+                    timestamp=datetime.fromisoformat(t["timestamp"]),
+                    symbol=t["symbol"],
+                    side=t["side"],
+                    size=t["size"],
+                    price=t["price"],
+                    strategy=t["strategy"],
+                    pnl=t.get("pnl"),
+                    order_id=t.get("order_id"),
+                    paper=t.get("paper", False),
+                    exit_reason=t.get("exit_reason", ""),
+                )
+                for t in state.get("trade_history", [])
+            ]
+            log.info(
+                f"[LIVE] Loaded state: {len(self._trail_state)} trail entries, "
+                f"{len(self.trade_history)} trades"
+            )
+        except Exception as e:
+            log.warning(f"[LIVE] Could not load live state: {e} — starting fresh")
+            self._trail_state = {}
+            self.trade_history = []
 
     def _set_leverage(self):
         """Set leverage per instrument — enough for pyramiding, not more."""
@@ -737,6 +885,7 @@ class LiveTrader:
             )
 
             log.info(f"[LIVE] Order filled: {side} {signal.symbol}")
+            self._save_state()
             return record
         else:
             log.error(f"[LIVE] Order failed: {result}")
@@ -803,6 +952,7 @@ class LiveTrader:
             # Clear trail state on close
             self._trail_state.pop(signal.symbol, None)
             log.info(f"[LIVE] Closed {signal.symbol}")
+            self._save_state()
             return record
         else:
             log.error(f"[LIVE] Close failed: {result}")
@@ -985,6 +1135,7 @@ class LiveTrader:
         """
         candle_highs = candle_highs or {}
         candle_lows = candle_lows or {}
+        dirty = False
 
         for symbol, state in list(self._trail_state.items()):
             price = current_prices.get(symbol)
@@ -1007,6 +1158,7 @@ class LiveTrader:
                     trail_active = True
                     state["trail_active"] = True
                     state["best_price"] = high
+                    dirty = True
                     new_sl = high - trail_offset
                     if current_sl is None or new_sl > current_sl:
                         self._update_sl_order(symbol, new_sl, state["size"], is_buy=False)
@@ -1016,6 +1168,7 @@ class LiveTrader:
                     trail_active = True
                     state["trail_active"] = True
                     state["best_price"] = low
+                    dirty = True
                     new_sl = low + trail_offset
                     if current_sl is None or new_sl < current_sl:
                         self._update_sl_order(symbol, new_sl, state["size"], is_buy=True)
@@ -1027,6 +1180,7 @@ class LiveTrader:
                 best = state.get("best_price", entry)
                 if side == "long" and high > best:
                     state["best_price"] = high
+                    dirty = True
                     new_sl = high - trail_offset
                     if current_sl is None or new_sl > current_sl:
                         self._update_sl_order(symbol, new_sl, state["size"], is_buy=False)
@@ -1034,11 +1188,15 @@ class LiveTrader:
                         log.info(f"[LIVE] Trail moved {symbol} long SL up to {new_sl:.4f} (best={high:.4f})")
                 elif side == "short" and low < best:
                     state["best_price"] = low
+                    dirty = True
                     new_sl = low + trail_offset
                     if current_sl is None or new_sl < current_sl:
                         self._update_sl_order(symbol, new_sl, state["size"], is_buy=True)
                         state["current_sl"] = new_sl
                         log.info(f"[LIVE] Trail moved {symbol} short SL down to {new_sl:.4f} (best={low:.4f})")
+
+        if dirty:
+            self._save_state()
 
     def _update_sl_order(self, symbol: str, new_sl: float, size: float, is_buy: bool):
         """Cancel existing SL and place new one at updated price."""

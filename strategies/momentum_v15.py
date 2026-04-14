@@ -98,6 +98,7 @@ class MomentumV15Strategy(BaseStrategy):
                 trail_atr_mult=self.trail_atr_multiplier,
                 reason=f"Momentum long: RSI={rsi_prev:.1f}, MACD={macd_hist_prev:.4f}",
             )
+            signal.atr_stop_mult = self.atr_stop_multiplier
             signal._trail_offset_value = trail_offset
             return signal
 
@@ -120,6 +121,7 @@ class MomentumV15Strategy(BaseStrategy):
                 trail_atr_mult=self.trail_atr_multiplier,
                 reason=f"Momentum short: RSI={rsi_prev:.1f}, MACD={macd_hist_prev:.4f}",
             )
+            signal.atr_stop_mult = self.atr_stop_multiplier
             signal._trail_offset_value = trail_offset
             return signal
 
