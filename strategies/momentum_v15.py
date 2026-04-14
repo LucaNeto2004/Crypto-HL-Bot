@@ -54,10 +54,10 @@ class MomentumV15Strategy(BaseStrategy):
         # -$0.17 at ADX 0-18 to +$0.78 at ADX 40+. Blocking low-ADX + flat-slope
         # entries captured +$0.63 per trade lift across the full history.
         # See research/2026-04-14_174500_momentum-regime-gate.md for the analysis.
-        self.regime_gate_enabled = True        # Master flag
-        self.regime_gate_shadow  = True         # Shadow: log "would skip" but don't block
-        self.regime_gate_adx_min = 25.0         # ADX floor
-        self.regime_gate_slope_min = 0.002      # |EMA50 slope over 20 bars| floor (0.2%)
+        self.regime_gate_enabled = True  # Master flag
+        self.regime_gate_shadow = True  # Shadow: log "would skip" but don't block
+        self.regime_gate_adx_min = 25.0  # ADX floor
+        self.regime_gate_slope_min = 0.002  # |EMA50 slope over 20 bars| floor (0.2%)
 
     def evaluate(self, symbol: str, df: pd.DataFrame, features: dict) -> Optional[Signal]:
         if not features or len(df) < 52:
