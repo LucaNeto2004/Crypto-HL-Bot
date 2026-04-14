@@ -311,7 +311,17 @@ class TradingBot:
                         log.info(f"Local exit: {signal.signal_type.value} {signal.symbol} — {signal.reason}")
                         self.process_signal(signal, current_price)
             else:
-                log.debug(f"Skipping local entry {signal.symbol} — TV handles entries")
+                # HL-NATIVE SHADOW: log what the local strategy would have fired
+                # as an entry, without actually executing. Used to compare
+                # Python strategy signals against TV webhook entries bar-by-bar
+                # before the full HL-native migration. See research note on
+                # TV webhook reliability / full HL migration (2026-04-14).
+                current_price = float(self.data.mid_prices.get(signal.symbol, 0))
+                log.info(
+                    f"[HL_NATIVE_SHADOW] {signal.symbol} {signal.signal_type.value} "
+                    f"@ {current_price:.4f} strategy={signal.strategy_name} "
+                    f"conf={signal.confidence:.2f} reason=\"{signal.reason}\""
+                )
 
     def process_signal(self, signal_obj, current_price: float, close_one: bool = False) -> dict:
         """Process a signal through risk gate → execution → bookkeeping.
