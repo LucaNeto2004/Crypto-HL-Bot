@@ -25,33 +25,11 @@ import ta
 
 from flask import Flask, request, jsonify
 
+from core import regime_gate
 from strategies.base import Signal, SignalType
 from utils.logger import setup_logger
 
 log = setup_logger("webhook")
-
-# ---- Momentum regime gate (mirrors strategies/momentum_v15.py) ----
-# Crypto entries can arrive via TV webhook, bypassing momentum_v15.py.evaluate().
-# This duplicates the gate check here so webhook signals are also filtered by the
-# validated-on-1307-trades regime rule.
-REGIME_GATE_ENABLED = True
-REGIME_GATE_ADX_MIN = 25.0
-REGIME_GATE_SLOPE_MIN = 0.002  # 0.2% absolute EMA50 slope over 20 bars
-REGIME_GATE_REQUIRE_RISING = True  # Require ADX > ADX[-5] (expanding trend).
-# Added 2026-04-14 after HYPE bled -$24 on 8 shorts at ADX 27.8 / slope 0.95%
-# — declining ADX marked exhaustion, not continuation. See research note.
-REGIME_GATE_RISING_LOOKBACK = 5
-
-# Per-symbol shadow/enforce mode.
-# 2026-04-15 morning briefing showed:
-#   ETH  — gate v2 saves $5.58 and flips from losing → green → ENFORCE
-#   HYPE — gate v2 costs $10.77 of profit (blocked bucket is still positive) → SHADOW
-# Symbols not in this set stay in shadow mode.
-REGIME_GATE_ENFORCE_SYMBOLS = {"ETH"}
-
-
-def _gate_is_enforcing(symbol: str) -> bool:
-    return symbol in REGIME_GATE_ENFORCE_SYMBOLS
 
 
 class WebhookServer:
@@ -231,44 +209,18 @@ class WebhookServer:
                 log.info(f"Webhook: Recalculated from HL ATR — SL={stop_loss:.2f}, trail={trail_offset:.4f}")
 
             # ---- Momentum regime gate ----
-            # Compute ADX + EMA50 slope inline and either log (shadow) or
-            # return early (enforce) when the gate would block this entry.
-            if REGIME_GATE_ENABLED and df is not None and len(df) >= 52:
-                try:
-                    closes_s = df['close'].astype(float)
-                    highs_s = df['high'].astype(float)
-                    lows_s = df['low'].astype(float)
-                    adx_series = ta.trend.ADXIndicator(highs_s, lows_s, closes_s, window=14).adx()
-                    gate_adx = float(adx_series.iloc[-1])
-                    if len(adx_series) > REGIME_GATE_RISING_LOOKBACK:
-                        adx_past = float(adx_series.iloc[-(REGIME_GATE_RISING_LOOKBACK + 1)])
-                    else:
-                        adx_past = 0.0
-                    adx_rising = gate_adx > adx_past
-                    ema50_s = ta.trend.ema_indicator(closes_s, window=50)
-                    if not pd.isna(ema50_s.iloc[-1]) and not pd.isna(ema50_s.iloc[-21]):
-                        gate_slope = float((ema50_s.iloc[-1] - ema50_s.iloc[-21]) / ema50_s.iloc[-21])
-                    else:
-                        gate_slope = 0.0
-                    abs_slope = abs(gate_slope)
-                    rule_adx_ok = gate_adx >= REGIME_GATE_ADX_MIN
-                    rule_slope_ok = abs_slope >= REGIME_GATE_SLOPE_MIN
-                    rule_rising_ok = adx_rising if REGIME_GATE_REQUIRE_RISING else True
-                    gate_pass = rule_adx_ok and rule_slope_ok and rule_rising_ok
-                    gate_stats = (f"ADX={gate_adx:.1f} (prev5={adx_past:.1f} rising={adx_rising}) "
-                                  f"|slope|={abs_slope*100:.3f}%")
-                    enforcing = _gate_is_enforcing(symbol)
-                    if gate_pass:
-                        log.info(f"REGIME_GATE {symbol}: PASS {gate_stats}")
-                    elif enforcing:
-                        log.info(f"REGIME_GATE {symbol}: BLOCK {gate_stats} "
-                                 f"[adx_ok={rule_adx_ok} slope_ok={rule_slope_ok} rising_ok={rule_rising_ok}]")
-                        return {"status": "blocked", "reason": "regime_gate"}
-                    else:
-                        log.info(f"REGIME_GATE {symbol}: SHADOW_BLOCK {gate_stats} "
-                                 f"[adx_ok={rule_adx_ok} slope_ok={rule_slope_ok} rising_ok={rule_rising_ok}]")
-                except Exception as e:
-                    log.warning(f"REGIME_GATE compute error for {symbol}: {e}")
+            # Shared logic in core/regime_gate.py. Either logs (shadow) or
+            # returns early (enforce) when the gate would block this entry.
+            gate = regime_gate.evaluate(df)
+            if gate is not None:
+                enforcing = regime_gate.is_enforcing(symbol)
+                if gate.pass_:
+                    log.info(f"REGIME_GATE {symbol}: PASS {gate.stats_str}")
+                elif enforcing:
+                    log.info(f"REGIME_GATE {symbol}: BLOCK {gate.stats_str} {gate.reason_str}")
+                    return {"status": "blocked", "reason": "regime_gate"}
+                else:
+                    log.info(f"REGIME_GATE {symbol}: SHADOW_BLOCK {gate.stats_str} {gate.reason_str}")
 
             signal = Signal(
                 symbol=symbol,
