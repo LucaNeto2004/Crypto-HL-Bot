@@ -21,7 +21,27 @@ from core.execution import PaperTrader
 from core.audit import AuditJournal
 from utils.logger import setup_logger
 
+# Vault writer (shared module, sibling of the bot dirs)
+import sys as _sys
+_SHARED_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "shared"))
+if _SHARED_DIR not in _sys.path:
+    _sys.path.insert(0, _SHARED_DIR)
+try:
+    import vault_writer  # type: ignore
+except Exception:
+    vault_writer = None  # type: ignore
+
 log = setup_logger("dashboard")
+
+
+def _vault_write_safe(fn_name: str, *args, **kwargs):
+    if vault_writer is None:
+        return None
+    try:
+        return getattr(vault_writer, fn_name)(*args, **kwargs)
+    except Exception as e:
+        log.warning("vault %s failed: %s", fn_name, e)
+        return None
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
@@ -276,11 +296,45 @@ def monitor_loop():
                 state["daily_pnl"] = round(daily_pnl, 2)
                 state["daily_trades"] = daily_trades
 
+                # Incident edge detection — write a note only when a flag flips
+                _prev = state.get("_incident_prev") or {
+                    "kill_switch": False,
+                    "account_dd_halt": False,
+                    "consecutive_loss_halt": False,
+                }
+                _now = {
+                    "kill_switch": bool(state.get("kill_switch")),
+                    "account_dd_halt": bool(state.get("account_dd_halt")),
+                    "consecutive_loss_halt": bool(state.get("consecutive_loss_halt")),
+                }
+                for _k in _now:
+                    if _now[_k] and not _prev.get(_k):
+                        _vault_write_safe(
+                            "write_incident_note",
+                            _k,
+                            f"{_k} triggered",
+                            {
+                                "bot": "crypto",
+                                "balance": state.get("balance"),
+                                "daily_pnl": state.get("daily_pnl"),
+                                "consecutive_losses": state.get("consecutive_losses"),
+                                "account_peak": state.get("account_peak_balance"),
+                            },
+                        )
+                state["_incident_prev"] = _now
                 state["last_error"] = None
 
             except Exception as e:
+                _prev_err = state.get("last_error")
                 state["last_error"] = str(e)
                 log.error(f"Monitor cycle error: {e}", exc_info=True)
+                if str(e) != _prev_err:
+                    _vault_write_safe(
+                        "write_incident_note",
+                        "last_error",
+                        str(e),
+                        {"bot": "crypto", "cycle": state.get("cycle", 0)},
+                    )
 
             time.sleep(1)  # Dashboard refreshes every 1s
 
@@ -653,6 +707,9 @@ def _run_research_job(job_id, symbol, auto_deploy):
         _jobs[job_id]["error"] = str(e)
         _jobs[job_id]["traceback"] = traceback.format_exc()
         log.error(f"Research job {job_id} failed: {e}", exc_info=True)
+    finally:
+        _jobs[job_id]["bot"] = "crypto"
+        _vault_write_safe("write_research_note", job_id, symbol, _jobs[job_id])
 
 
 @app.route("/api/research/results")
@@ -753,9 +810,165 @@ def prototype_charts():
     return render_template("prototype_charts.html")
 
 
+@app.route("/unified")
+def unified():
+    return render_template("unified.html")
+
+
+@app.route("/api/vault/recent")
+def api_vault_recent():
+    """Return recent notes from each vault folder for the unified panel."""
+    if vault_writer is None:
+        return jsonify({"trades": [], "research": [], "incidents": []})
+    try:
+        return jsonify({
+            "trades": vault_writer.list_recent("trades", 10),
+            "research": vault_writer.list_recent("research", 10),
+            "incidents": vault_writer.list_recent("incidents", 10),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.route("/shadow")
+def shadow_view():
+    return _render_shadow_page("crypto-bot")
+
+
+@app.route("/api/shadow")
+def shadow_api():
+    return jsonify(_load_shadow_ledgers())
+
+
+def _load_shadow_ledgers() -> dict:
+    import json
+    result = {"hl_native": None, "scalp": None}
+    base = os.path.dirname(os.path.abspath(__file__))
+    paths = {
+        "hl_native": os.path.join(base, "data", "hl_native_shadow_trades.json"),
+        "scalp": os.path.join(base, "data", "scalp_shadow_trades.json"),
+    }
+    for key, path in paths.items():
+        if os.path.exists(path):
+            try:
+                result[key] = json.loads(open(path).read())
+            except Exception as e:
+                result[key] = {"error": str(e)}
+    return result
+
+
+def _render_shadow_page(bot_name: str) -> str:
+    data = _load_shadow_ledgers()
+
+    def _stats(ledger):
+        if not ledger or "error" in ledger:
+            return {"n": 0, "open": 0, "balance": 0, "pnl": 0, "wr": 0.0, "pf": "—"}
+        closed = ledger.get("closed_trades", [])
+        open_pos = ledger.get("open_positions", {})
+        balance = ledger.get("balance", 10000)
+        start = ledger.get("starting_balance", 10000)
+        pnls = [t.get("pnl", 0) for t in closed]
+        wins = [p for p in pnls if p > 0]
+        losses = [p for p in pnls if p <= 0]
+        pf = (sum(wins) / abs(sum(losses))) if losses and sum(losses) else float("inf")
+        return {
+            "n": len(closed),
+            "open": len(open_pos),
+            "balance": balance,
+            "pnl": balance - start,
+            "wr": (100 * len(wins) / len(pnls)) if pnls else 0.0,
+            "pf": f"{pf:.2f}" if pf != float("inf") else "∞",
+        }
+
+    def _rows(ledger, kind):
+        if not ledger or "error" in ledger:
+            return ""
+        open_pos = list(ledger.get("open_positions", {}).values())
+        closed = ledger.get("closed_trades", [])[-20:][::-1]
+        rows_html = []
+        for p in open_pos:
+            side_c = "#4ade80" if p.get("side") == "long" else "#f87171"
+            rows_html.append(
+                f'<tr><td>OPEN</td><td><b>{p.get("symbol","")}</b></td>'
+                f'<td style="color:{side_c}">{p.get("side","").upper()}</td>'
+                f'<td>{p.get("entry_price",0):.4f}</td>'
+                f'<td>{(p.get("stop_loss") or 0):.4f}</td>'
+                f'<td>—</td><td>{p.get("strategy","")}</td>'
+                f'<td class="dim">{p.get("entry_time","")[:19]}</td></tr>'
+            )
+        for t in closed:
+            side_c = "#4ade80" if t.get("side") == "long" else "#f87171"
+            pnl = t.get("pnl", 0)
+            pnl_c = "#4ade80" if pnl >= 0 else "#f87171"
+            rows_html.append(
+                f'<tr><td class="dim">CLOSED</td><td><b>{t.get("symbol","")}</b></td>'
+                f'<td style="color:{side_c}">{t.get("side","").upper()}</td>'
+                f'<td>{t.get("entry_price",0):.4f}</td>'
+                f'<td>{t.get("exit_price",0):.4f}</td>'
+                f'<td style="color:{pnl_c}">${pnl:+.2f}</td>'
+                f'<td>{t.get("strategy","")}</td>'
+                f'<td class="dim">{t.get("exit_time","")[:19]}</td></tr>'
+            )
+        return "\n".join(rows_html) or '<tr><td colspan="8" class="dim">no trades yet</td></tr>'
+
+    hl_stats = _stats(data.get("hl_native"))
+    scalp_stats = _stats(data.get("scalp"))
+    hl_rows = _rows(data.get("hl_native"), "hl_native")
+    scalp_rows = _rows(data.get("scalp"), "scalp")
+
+    return f"""<!DOCTYPE html>
+<html><head><title>Shadow Trades — {bot_name}</title>
+<meta http-equiv="refresh" content="30">
+<style>
+  body {{ font-family: -apple-system, monospace; background: #0f172a; color: #e2e8f0; margin: 20px; }}
+  h1 {{ color: #a5b4fc; }}
+  h2 {{ color: #c7d2fe; border-bottom: 1px solid #334155; padding-bottom: 5px; margin-top: 30px; }}
+  .stats {{ display: flex; gap: 20px; margin: 10px 0 20px; }}
+  .stat {{ background: #1e293b; padding: 12px 18px; border-radius: 6px; }}
+  .stat .label {{ color: #94a3b8; font-size: 11px; text-transform: uppercase; }}
+  .stat .value {{ color: #fff; font-size: 18px; font-weight: bold; }}
+  table {{ width: 100%; border-collapse: collapse; }}
+  th, td {{ text-align: left; padding: 6px 10px; border-bottom: 1px solid #1e293b; font-size: 13px; }}
+  th {{ color: #94a3b8; text-transform: uppercase; font-size: 11px; }}
+  .dim {{ color: #64748b; }}
+  .pnl-pos {{ color: #4ade80; }}
+  .pnl-neg {{ color: #f87171; }}
+</style></head>
+<body>
+  <h1>Shadow Trades — {bot_name}</h1>
+  <p class="dim">Auto-refreshes every 30s. Virtual trades only — zero production impact.</p>
+
+  <h2>HL-Native Shadow (Python-on-HL signals)</h2>
+  <div class="stats">
+    <div class="stat"><div class="label">Closed</div><div class="value">{hl_stats['n']}</div></div>
+    <div class="stat"><div class="label">Open</div><div class="value">{hl_stats['open']}</div></div>
+    <div class="stat"><div class="label">P&amp;L</div><div class="value {'pnl-pos' if hl_stats['pnl']>=0 else 'pnl-neg'}">${hl_stats['pnl']:+.2f}</div></div>
+    <div class="stat"><div class="label">WR</div><div class="value">{hl_stats['wr']:.1f}%</div></div>
+    <div class="stat"><div class="label">PF</div><div class="value">{hl_stats['pf']}</div></div>
+  </div>
+  <table>
+    <thead><tr><th>State</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit/SL</th><th>P&amp;L</th><th>Strategy</th><th>Time</th></tr></thead>
+    <tbody>{hl_rows}</tbody>
+  </table>
+
+  <h2>Scalp Shadow (2026-04-14 elected configs)</h2>
+  <div class="stats">
+    <div class="stat"><div class="label">Closed</div><div class="value">{scalp_stats['n']}</div></div>
+    <div class="stat"><div class="label">Open</div><div class="value">{scalp_stats['open']}</div></div>
+    <div class="stat"><div class="label">P&amp;L</div><div class="value {'pnl-pos' if scalp_stats['pnl']>=0 else 'pnl-neg'}">${scalp_stats['pnl']:+.2f}</div></div>
+    <div class="stat"><div class="label">WR</div><div class="value">{scalp_stats['wr']:.1f}%</div></div>
+    <div class="stat"><div class="label">PF</div><div class="value">{scalp_stats['pf']}</div></div>
+  </div>
+  <table>
+    <thead><tr><th>State</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit/SL</th><th>P&amp;L</th><th>Strategy</th><th>Time</th></tr></thead>
+    <tbody>{scalp_rows}</tbody>
+  </table>
+</body></html>"""
 
 
 if __name__ == "__main__":

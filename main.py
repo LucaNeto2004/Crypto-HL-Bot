@@ -76,6 +76,27 @@ class TradingBot:
         # Register strategies (deployed params loaded automatically)
         self.strategy_mgr.register(MomentumV15Strategy())
 
+        # Scalp shadow runner — forward-walks the 2026-04-14 elected scalp
+        # configs (ETH 15m pullback_pair, HYPE 15m pullback_pair) against
+        # real HL candles. Evaluates + logs + records to a virtual ledger.
+        # Does NOT touch production state.
+        try:
+            from core.scalp_shadow import ScalpShadowRunner
+            from strategies.pullback_pair import PullbackPairStrategy
+            self.scalp_shadow = ScalpShadowRunner(
+                data_client=self.data,
+                features_engine=self.strategy_mgr.features,
+                ledger_path=os.path.join(os.path.dirname(__file__), "data", "scalp_shadow_trades.json"),
+                size_usd=200.0,
+                starting_balance=10_000.0,
+            )
+            self.scalp_shadow.register("ETH", "15m", PullbackPairStrategy())
+            self.scalp_shadow.register("HYPE", "15m", PullbackPairStrategy())
+            log.info("Scalp shadow runner initialized with 2 configs")
+        except Exception as e:
+            log.warning(f"Scalp shadow runner failed to init — continuing without it: {e}")
+            self.scalp_shadow = None
+
         # Thread lock — serializes signal processing between 5-min cycle and webhook
         self._signal_lock = threading.Lock()
 
@@ -277,6 +298,11 @@ class TradingBot:
                 self.shadow_ledger.update_prices(current_prices)
             except Exception as e:
                 log.warning(f"Shadow ledger update_prices failed: {e}")
+
+        # Scalp shadow — update virtual positions + tick eval (new bar check)
+        if self.scalp_shadow:
+            self.scalp_shadow.update_prices(current_prices)
+            self.scalp_shadow.tick()
         candle_highs = {}
         candle_lows = {}
         for symbol, df in candles.items():
