@@ -43,6 +43,7 @@ def _vault_write_safe(fn_name: str, *args, **kwargs):
         log.warning("vault %s failed: %s", fn_name, e)
         return None
 
+
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
 # ── Shared state for the web server ──────────────────────────────────────────
