@@ -251,14 +251,17 @@ class PaperTrader:
             log.warning(f"[PAPER] Pyramiding limit ({MAX_PYRAMID}) reached for {signal.symbol} {side} — skipping")
             return None
 
-        # Dynamic position sizing: % of account × confidence
+        # Dynamic position sizing: NOTIONAL as % of account × confidence.
+        # size_usd is the dollar notional value of the position, not the
+        # margin committed. Leverage (live only) affects margin requirement,
+        # not P&L per adverse move. Paper trading is leverage-agnostic.
         if signal.size_usd:
             size_usd = signal.size_usd
             log.debug(f"[PAPER] {signal.symbol}: using signal size_usd=${size_usd:.2f}")
         elif self.balance > 0 and instrument:
             size_usd = self.balance * instrument.base_position_pct
             log.debug(
-                f"[PAPER] {signal.symbol}: base size=${size_usd:.2f} "
+                f"[PAPER] {signal.symbol}: base notional=${size_usd:.2f} "
                 f"(balance=${self.balance:.2f} × {instrument.base_position_pct:.0%})"
             )
         else:

@@ -12,9 +12,14 @@ class Instrument:
     group: str            # Asset group (e.g. "crypto")
     tick_size: float      # Min price increment
     lot_size: float       # Min size increment
-    max_leverage: int     # Max leverage allowed by risk gate
+    max_leverage: int     # Leverage set on HL side via update_leverage() (live only; paper ignores)
     default_size: float   # Default position size in USD (fallback if balance unavailable)
-    base_position_pct: float = 0.20  # Max position as % of account (scaled by confidence)
+    # NOTIONAL per entry as % of wallet (NOT margin). E.g. 0.20 on a $10k
+    # account means each entry opens a position worth $2000 at the asset's
+    # current price (size_usd = balance × base_position_pct in execution.py).
+    # Leverage only affects margin requirement on the live HL side, not the
+    # position size or P&L per adverse move.
+    base_position_pct: float = 0.20
     is_cross: bool = True  # True = cross margin, False = isolated (HL restriction)
 
 
@@ -115,6 +120,11 @@ class BotConfig:
 
     # Logging
     log_level: str = "INFO"
+
+    # Obsidian vault — leave unset to disable note-writing
+    vault_path: str = field(default_factory=lambda: os.getenv(
+        "VAULT_PATH", "/Users/lucaneto/obsidian vault/Trading"
+    ))
 
 
 def load_config() -> BotConfig:
