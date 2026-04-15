@@ -52,6 +52,25 @@ class TradingBot:
         self.alerts = AlertManager(self.config)
         self.audit = AuditJournal()
 
+        # HL-native shadow ledger — virtual trades from Python strategy signals.
+        # Does NOT affect real bot state. Used to measure Python-on-HL expected
+        # P&L forward-walking vs the real TV-webhook-driven bot P&L before
+        # flipping the HL-native execution switch.
+        try:
+            import os
+            import sys
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+            from shared.shadow_ledger import ShadowLedger
+            self.shadow_ledger = ShadowLedger(
+                path=os.path.join(os.path.dirname(__file__), "data", "hl_native_shadow_trades.json"),
+                starting_balance=10_000.0,
+                size_usd=200.0,
+            )
+            log.info(f"HL-native shadow ledger initialized (path={self.shadow_ledger.path})")
+        except Exception as e:
+            log.warning(f"Shadow ledger failed to init — continuing without it: {e}")
+            self.shadow_ledger = None
+
         # Register strategies (deployed params loaded automatically)
         self.strategy_mgr.register(MomentumV15Strategy())
 
@@ -249,6 +268,13 @@ class TradingBot:
 
         # 4. Check paper SL/TP before strategy evaluation
         current_prices = dict(self.data.mid_prices)
+
+        # Shadow ledger — update virtual positions (trails + SL hits)
+        if self.shadow_ledger:
+            try:
+                self.shadow_ledger.update_prices(current_prices)
+            except Exception as e:
+                log.warning(f"Shadow ledger update_prices failed: {e}")
         candle_highs = {}
         candle_lows = {}
         for symbol, df in candles.items():
@@ -322,6 +348,23 @@ class TradingBot:
                     f"@ {current_price:.4f} strategy={signal.strategy_name} "
                     f"conf={signal.confidence:.2f} reason=\"{signal.reason}\""
                 )
+                # Also open a virtual position in the shadow ledger so we can
+                # track forward-walking expected P&L from Python's signals.
+                if self.shadow_ledger and current_price > 0:
+                    try:
+                        side = "long" if signal.signal_type == SignalType.LONG else "short"
+                        trail_offset = getattr(signal, "_trail_offset_value", None)
+                        self.shadow_ledger.open_virtual(
+                            symbol=signal.symbol,
+                            side=side,
+                            entry_price=current_price,
+                            stop_loss=signal.stop_loss,
+                            trail_offset=trail_offset,
+                            strategy_name=signal.strategy_name,
+                            reason=signal.reason or "",
+                        )
+                    except Exception as e:
+                        log.warning(f"Shadow ledger open_virtual failed for {signal.symbol}: {e}")
 
     def process_signal(self, signal_obj, current_price: float, close_one: bool = False) -> dict:
         """Process a signal through risk gate → execution → bookkeeping.
