@@ -44,14 +44,14 @@ def _load_shadow_ledger_class():
 
 class ScalpShadowRunner:
     def __init__(self, data_client, features_engine, ledger_path: str,
-                 size_usd: float = 200.0, starting_balance: float = 10_000.0):
+                 position_pct: float = 0.20, starting_balance: float = 10_000.0):
         self.data = data_client
         self.features = features_engine
         ShadowLedger = _load_shadow_ledger_class()
         self.ledger = ShadowLedger(
             path=ledger_path,
             starting_balance=starting_balance,
-            size_usd=size_usd,
+            position_pct=position_pct,
         )
         self.configs: list[tuple[str, str, BaseStrategy]] = []
         self._last_bar_ts: dict[tuple[str, str], str] = {}

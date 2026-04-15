@@ -66,7 +66,7 @@ class TradingBot:
             self.shadow_ledger = _mod.ShadowLedger(
                 path=os.path.join(os.path.dirname(__file__), "data", "hl_native_shadow_trades.json"),
                 starting_balance=10_000.0,
-                size_usd=200.0,
+                position_pct=0.20,  # matches real bot base_position_pct
             )
             log.info(f"HL-native shadow ledger initialized (path={self.shadow_ledger.path})")
         except Exception as e:
@@ -87,7 +87,7 @@ class TradingBot:
                 data_client=self.data,
                 features_engine=self.strategy_mgr.features,
                 ledger_path=os.path.join(os.path.dirname(__file__), "data", "scalp_shadow_trades.json"),
-                size_usd=200.0,
+                position_pct=0.20,  # matches real bot base_position_pct
                 starting_balance=10_000.0,
             )
             self.scalp_shadow.register("ETH", "15m", PullbackPairStrategy())
