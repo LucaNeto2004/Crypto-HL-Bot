@@ -58,10 +58,12 @@ class TradingBot:
         # flipping the HL-native execution switch.
         try:
             import os
-            import sys
-            sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-            from shared.shadow_ledger import ShadowLedger
-            self.shadow_ledger = ShadowLedger(
+            import importlib.util
+            _sl_path = os.path.join(os.path.dirname(__file__), "..", "shared", "shadow_ledger.py")
+            _spec = importlib.util.spec_from_file_location("shadow_ledger_mod", _sl_path)
+            _mod = importlib.util.module_from_spec(_spec)
+            _spec.loader.exec_module(_mod)
+            self.shadow_ledger = _mod.ShadowLedger(
                 path=os.path.join(os.path.dirname(__file__), "data", "hl_native_shadow_trades.json"),
                 starting_balance=10_000.0,
                 size_usd=200.0,
