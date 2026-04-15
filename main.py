@@ -372,27 +372,34 @@ class TradingBot:
                 # TV webhook reliability / full HL migration (2026-04-14).
                 current_price = float(self.data.mid_prices.get(signal.symbol, 0))
 
-                # Mirror the webhook regime gate on symbols where it's enforced
-                # on the live path. Otherwise the shadow side is running with
-                # looser filtering than the webhook side and the comparison is
-                # unfair (see 2026-04-15 briefing).
+                # Always compute the regime gate state on the shadow path so
+                # we can observe what the gate would have done on every
+                # symbol, mirroring webhook.py's behavior. Symmetric with
+                # Universe A: enforce only for symbols in ENFORCE_SYMBOLS
+                # (currently just ETH), shadow-log for everyone else.
                 from core import regime_gate
+                df_for_gate = new_candles.get(signal.symbol)
+                gate = regime_gate.evaluate(df_for_gate)
+                enforcing = regime_gate.is_enforcing(signal.symbol)
                 gate_blocked = False
-                if regime_gate.is_enforcing(signal.symbol):
-                    df_for_gate = new_candles.get(signal.symbol)
-                    gate = regime_gate.evaluate(df_for_gate)
-                    if gate is not None and not gate.pass_:
+                gate_suffix = ""
+                if gate is not None:
+                    if gate.pass_:
+                        gate_suffix = f" gate=PASS {gate.stats_str}"
+                    elif enforcing:
                         log.info(
                             f"[HL_NATIVE_SHADOW_BLOCK] {signal.symbol} {signal.signal_type.value} "
                             f"@ {current_price:.4f} gate={gate.stats_str} {gate.reason_str}"
                         )
                         gate_blocked = True
+                    else:
+                        gate_suffix = f" gate=SHADOW_BLOCK {gate.stats_str} {gate.reason_str}"
 
                 if not gate_blocked:
                     log.info(
                         f"[HL_NATIVE_SHADOW] {signal.symbol} {signal.signal_type.value} "
                         f"@ {current_price:.4f} strategy={signal.strategy_name} "
-                        f"conf={signal.confidence:.2f} reason=\"{signal.reason}\""
+                        f"conf={signal.confidence:.2f} reason=\"{signal.reason}\"{gate_suffix}"
                     )
                     # Also open a virtual position in the shadow ledger so we can
                     # track forward-walking expected P&L from Python's signals.
