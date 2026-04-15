@@ -35,13 +35,23 @@ log = setup_logger("webhook")
 # This duplicates the gate check here so webhook signals are also filtered by the
 # validated-on-1307-trades regime rule.
 REGIME_GATE_ENABLED = True
-REGIME_GATE_SHADOW = True  # True = log only, False = actually block
 REGIME_GATE_ADX_MIN = 25.0
 REGIME_GATE_SLOPE_MIN = 0.002  # 0.2% absolute EMA50 slope over 20 bars
 REGIME_GATE_REQUIRE_RISING = True  # Require ADX > ADX[-5] (expanding trend).
 # Added 2026-04-14 after HYPE bled -$24 on 8 shorts at ADX 27.8 / slope 0.95%
 # — declining ADX marked exhaustion, not continuation. See research note.
 REGIME_GATE_RISING_LOOKBACK = 5
+
+# Per-symbol shadow/enforce mode.
+# 2026-04-15 morning briefing showed:
+#   ETH  — gate v2 saves $5.58 and flips from losing → green → ENFORCE
+#   HYPE — gate v2 costs $10.77 of profit (blocked bucket is still positive) → SHADOW
+# Symbols not in this set stay in shadow mode.
+REGIME_GATE_ENFORCE_SYMBOLS = {"ETH"}
+
+
+def _gate_is_enforcing(symbol: str) -> bool:
+    return symbol in REGIME_GATE_ENFORCE_SYMBOLS
 
 
 class WebhookServer:
@@ -247,14 +257,16 @@ class WebhookServer:
                     gate_pass = rule_adx_ok and rule_slope_ok and rule_rising_ok
                     gate_stats = (f"ADX={gate_adx:.1f} (prev5={adx_past:.1f} rising={adx_rising}) "
                                   f"|slope|={abs_slope*100:.3f}%")
+                    enforcing = _gate_is_enforcing(symbol)
                     if gate_pass:
                         log.info(f"REGIME_GATE {symbol}: PASS {gate_stats}")
-                    elif REGIME_GATE_SHADOW:
+                    elif enforcing:
+                        log.info(f"REGIME_GATE {symbol}: BLOCK {gate_stats} "
+                                 f"[adx_ok={rule_adx_ok} slope_ok={rule_slope_ok} rising_ok={rule_rising_ok}]")
+                        return {"status": "blocked", "reason": "regime_gate"}
+                    else:
                         log.info(f"REGIME_GATE {symbol}: SHADOW_BLOCK {gate_stats} "
                                  f"[adx_ok={rule_adx_ok} slope_ok={rule_slope_ok} rising_ok={rule_rising_ok}]")
-                    else:
-                        log.info(f"REGIME_GATE {symbol}: BLOCK {gate_stats}")
-                        return {"status": "blocked", "reason": "regime_gate"}
                 except Exception as e:
                     log.warning(f"REGIME_GATE compute error for {symbol}: {e}")
 

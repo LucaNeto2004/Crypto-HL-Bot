@@ -55,11 +55,14 @@ class MomentumV15Strategy(BaseStrategy):
         # entries captured +$0.63 per trade lift across the full history.
         # See research/2026-04-14_174500_momentum-regime-gate.md for the analysis.
         self.regime_gate_enabled = True  # Master flag
-        self.regime_gate_shadow = True  # Shadow: log "would skip" but don't block
         self.regime_gate_adx_min = 25.0  # ADX floor
         self.regime_gate_slope_min = 0.002  # |EMA50 slope over 20 bars| floor (0.2%)
         self.regime_gate_require_rising = True  # ADX must be > ADX 5 bars ago
         self.regime_gate_rising_lookback = 5
+        # Per-symbol enforce/shadow mode. 2026-04-15 morning briefing showed
+        # gate v2 saves $5.58 on ETH (flips losing → green) but costs $10.77
+        # on HYPE. Enforce only on symbols where net impact is positive.
+        self.regime_gate_enforce_symbols = {"ETH"}
 
     def evaluate(self, symbol: str, df: pd.DataFrame, features: dict) -> Optional[Signal]:
         if not features or len(df) < 52:
@@ -106,14 +109,16 @@ class MomentumV15Strategy(BaseStrategy):
             gate_pass = rule_adx_ok and rule_slope_ok and rule_rising_ok
             gate_stats = (f"ADX={adx_prev:.1f} (prev{lb}={adx_past:.1f} rising={adx_rising}) "
                           f"|slope|={abs_slope*100:.3f}%")
+            enforcing = symbol in self.regime_gate_enforce_symbols
             if gate_pass:
                 log.info(f"REGIME_GATE {symbol}: PASS {gate_stats}")
-            elif self.regime_gate_shadow:
+            elif enforcing:
+                log.info(f"REGIME_GATE {symbol}: BLOCK {gate_stats} "
+                         f"[adx_ok={rule_adx_ok} slope_ok={rule_slope_ok} rising_ok={rule_rising_ok}]")
+                return None
+            else:
                 log.info(f"REGIME_GATE {symbol}: SHADOW_BLOCK {gate_stats} "
                          f"[adx_ok={rule_adx_ok} slope_ok={rule_slope_ok} rising_ok={rule_rising_ok}]")
-            else:
-                log.info(f"REGIME_GATE {symbol}: BLOCK {gate_stats}")
-                return None
 
         log.debug(
             f"{symbol} [prev]: price={price_prev:.2f} EMA9={ema9_prev:.2f} "
